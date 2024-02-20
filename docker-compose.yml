@@ -1,0 +1,38 @@
+
+services:
+  echo:
+    image: mendhak/http-https-echo
+    environment:
+      - HTTP_PORT=80
+
+  uploader:
+    build: .
+    image: samply/beam-file
+    container_name: uploader
+    environment:
+      - BEAM_ID=app1.proxy1.broker
+      - BEAM_SECRET=App1Secret
+      - BEAM_URL=http://proxy1:8081
+      - BIND_ADDR=0.0.0.0:8085
+    networks:
+      - dev_default
+      - default
+  
+  downloader:
+    build: .
+    image: samply/beam-file
+    environment:
+      - BEAM_ID=app1.proxy2.broker
+      - BEAM_SECRET=App1Secret
+      - BEAM_URL=http://proxy2:8082
+      - BIND_ADDR=0.0.0.0:8086
+      - CALLBACK=http://echo
+    depends_on:
+      - echo
+    networks:
+      - dev_default
+      - default
+    
+networks:
+  dev_default:
+    external: true

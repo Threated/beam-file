@@ -11,8 +11,8 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 # Build application
 COPY . .
-RUN cargo build --release --bin beam_file
+RUN cargo build --release --bin beam-file
 
 FROM gcr.io/distroless/cc-debian12 AS runtime
-COPY --from=builder /app/target/release/beam_file /usr/local/bin/
-ENTRYPOINT ["/usr/local/bin/beam_file"]
+COPY --from=builder /app/target/release/beam-file /usr/local/bin/
+ENTRYPOINT ["/usr/local/bin/beam-file"]
