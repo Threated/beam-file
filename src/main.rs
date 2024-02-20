@@ -112,11 +112,12 @@ async fn send_file(
         CONFIG.beam_id.app_name(),
         CONFIG.beam_id.as_ref().splitn(3, '.').nth(2).expect("Invalid app id")
     ));
-    const RELEVANT_HEADERS: [HeaderName; 4] = [
+    const RELEVANT_HEADERS: [HeaderName; 5] = [
         header::CONTENT_LENGTH,
         header::CONTENT_DISPOSITION,
         header::CONTENT_ENCODING,
-        header::CONTENT_TYPE
+        header::CONTENT_TYPE,
+        header::HeaderName::from_static("metadata")
     ];
     let related_headers = headers
         .into_iter()
