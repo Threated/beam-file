@@ -14,5 +14,6 @@ COPY . .
 RUN cargo build --release --bin beam-file
 
 FROM gcr.io/distroless/cc-debian12 AS runtime
+STOPSIGNAL SIGINT
 COPY --from=builder /app/target/release/beam-file /usr/local/bin/
 ENTRYPOINT ["/usr/local/bin/beam-file"]
