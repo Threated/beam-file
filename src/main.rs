@@ -112,16 +112,17 @@ async fn send_file(
         CONFIG.beam_id.app_name(),
         CONFIG.beam_id.as_ref().splitn(3, '.').nth(2).expect("Invalid app id")
     ));
-    const RELVANT_HEADERS: [HeaderName; 3] = [
+    const RELEVANT_HEADERS: [HeaderName; 4] = [
         header::CONTENT_LENGTH,
         header::CONTENT_DISPOSITION,
         header::CONTENT_ENCODING,
+        header::CONTENT_TYPE
     ];
     let related_headers = headers
         .into_iter()
         .filter_map(|(maybe_k, v)| {
             if let Some(k) = maybe_k {
-                RELVANT_HEADERS.contains(&k).then_some((k, v))
+                RELEVANT_HEADERS.contains(&k).then_some((k, v))
             } else {
                 None
             }
