@@ -24,6 +24,7 @@ services:
       - BEAM_SECRET=App1Secret
       - BEAM_URL=http://proxy1:8081
       - BIND_ADDR=0.0.0.0:8085
+      - API_KEY=SuperSecretApiKey
     ports:
       - 8085:8085
     networks:
@@ -41,6 +42,7 @@ services:
       - BEAM_URL=http://proxy2:8082
       - BIND_ADDR=0.0.0.0:8086
       - CALLBACK=http://echo
+      - API_KEY=OtherSuperSecretApiKey
     depends_on:
       - echo
     networks:
@@ -60,12 +62,13 @@ networks:
 After starting this compose process with `docker compose up` we should now be able to upload a file to the uploader at Site A and see its content being echoed by the http echo server located at Site B.
 To do this we will be using curl:
 ```bash
-curl -v -X POST -F "data=@Readme.md" http://localhost:8085/send/proxy2
+curl -v -X POST -F "data=@Readme.md" -u ":SuperSecretApiKey"  http://localhost:8085/send/proxy2
 ```
 
 If everything went well there should now be a logs message of the Readme emitted by the echo server.
 
 `POST /send/:beam_proxy_name` is the only endpoint exposed this application. \
+It requires basic auth with an empty username and the api key as the password. \
 The body along with the following headers will be transmitted as is to the other proxy:
 ```
 Content-Length
@@ -84,6 +87,7 @@ Options:
       --bind-addr <BIND_ADDR>      Address the server should bind to [env: BIND_ADDR=] [default: 0.0.0.0:8080]
       --beam-url <BEAM_URL>        Url of the local beam proxy which is required to have sockets enabled [env: BEAM_URL=] [default: http://beam-proxy:8081]
       --beam-secret <BEAM_SECRET>  Beam api key [env: BEAM_SECRET=]
+      --api-key <API_KEY>          Api key required for uploading files [env: API_KEY=]
       --beam-id <BEAM_ID>          The app id of this application [env: BEAM_ID=]
       --callback <CALLBACK>        A url to an endpoint that will be called when we are receiving a new file [env: CALLBACK=]
   -h, --help                       Print help

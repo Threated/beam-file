@@ -3,7 +3,7 @@ use std::{net::SocketAddr, convert::Infallible};
 use beam_lib::{reqwest::Url, AppId};
 use clap::Parser;
 
-/// BeamSEL
+/// Samply.Beam.File
 #[derive(Debug, Parser)]
 pub struct Config {
     /// Address the server should bind to
@@ -17,6 +17,10 @@ pub struct Config {
     /// Beam api key
     #[clap(env, long)]
     pub beam_secret: String,
+
+    /// Api key required for uploading files
+    #[clap(env, long)]
+    pub api_key: String,
 
     /// The app id of this application
     #[clap(long, env, value_parser=|id: &str| Ok::<_, Infallible>(AppId::new_unchecked(id)))]

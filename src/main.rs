@@ -3,10 +3,7 @@ mod config;
 use std::{io, pin::pin, time::Duration};
 
 use axum::{
-    extract::{BodyStream, Path},
-    http::{header, HeaderMap, HeaderName, StatusCode},
-    routing::post,
-    Router,
+    extract::{BodyStream, Path}, headers::{authorization, Authorization}, http::{header, HeaderMap, HeaderName, StatusCode}, routing::post, Router, TypedHeader
 };
 use beam_lib::{AppId, BeamClient, BlockingOptions, SocketTask};
 use clap::Parser;
@@ -104,9 +101,13 @@ struct FileMetadata {
 
 async fn send_file(
     Path(other_proxy_name): Path<String>,
+    auth: TypedHeader<Authorization<authorization::Basic>>,
     headers: HeaderMap,
     body: BodyStream,
 ) -> Result<(), StatusCode> {
+    if auth.password() != CONFIG.api_key {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
     let to = AppId::new_unchecked(format!(
         "{}.{other_proxy_name}.{}",
         CONFIG.beam_id.app_name(),

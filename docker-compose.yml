@@ -14,6 +14,9 @@ services:
       - BEAM_SECRET=App1Secret
       - BEAM_URL=http://proxy1:8081
       - BIND_ADDR=0.0.0.0:8085
+      - API_KEY=SuperSecretApiKey
+    ports:
+      - 8085:8085
     networks:
       - dev_default
       - default
@@ -27,6 +30,7 @@ services:
       - BEAM_URL=http://proxy2:8082
       - BIND_ADDR=0.0.0.0:8086
       - CALLBACK=http://echo
+      - API_KEY=SuperSecretApiKey2
     depends_on:
       - echo
     networks:
