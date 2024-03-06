@@ -11,9 +11,10 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 # Build application
 COPY . .
-RUN cargo build --release --bin beam-file
+ENV RUSTFLAGS='-C target-feature=+crt-static'
+RUN cargo build --release --bin beam-file --all-features --target x86_64-unknown-linux-gnu
 
-FROM gcr.io/distroless/cc-debian12 AS runtime
+FROM scratch
 STOPSIGNAL SIGINT
-COPY --from=builder /app/target/release/beam-file /usr/local/bin/
+COPY --from=builder /app/target/x86_64-unknown-linux-gnu/release/beam-file /usr/local/bin/
 ENTRYPOINT ["/usr/local/bin/beam-file"]
