@@ -2,19 +2,18 @@ mod config;
 #[cfg(feature = "server")]
 mod server;
 
-use std::{path::PathBuf, process::ExitCode, time::SystemTime};
+use std::{path::Path, process::ExitCode, time::SystemTime};
 
 use beam_lib::{AppId, BeamClient, BlockingOptions, SocketTask};
 use clap::Parser;
-use config::{Config, Mode, ReceiveMode};
+use config::{Config, SendArgs, Mode, ReceiveMode};
 use futures_util::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use once_cell::sync::Lazy;
 use reqwest::{Client, Upgraded, Url};
-use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
 use tokio_util::io::ReaderStream;
-use reqwest::header::HeaderMap;
-use anyhow::{bail, Context, Result};
+use reqwest::header::{HeaderName, HeaderValue, HeaderMap};
+use anyhow::{anyhow, bail, Context, Result};
 
 pub static CONFIG: Lazy<Config> = Lazy::new(Config::parse);
 
@@ -30,16 +29,16 @@ pub static CLIENT: Lazy<Client> = Lazy::new(Client::new);
 #[tokio::main]
 async fn main() -> ExitCode {
     let work = match &CONFIG.mode {
-        Mode::Send { to, file } if file.to_string_lossy() == "-" => send_file(to, tokio::io::stdin(), FileMetadata::default()).boxed(),
-        Mode::Send { to, file } => tokio::fs::File::open(file)
+        Mode::Send(send_args @ SendArgs { file, .. }) if file.to_string_lossy() == "-" => send_file(tokio::io::stdin(), send_args).boxed(),
+        Mode::Send(send_args @ SendArgs { file, .. }) => tokio::fs::File::open(file)
             .err_into()
-            .and_then(|f| send_file(to, f, FileMetadata::default()))
+            .and_then(|f| send_file(f, send_args))
             .boxed(),
         Mode::Receive { count, mode } => stream_tasks()
             .and_then(connect_socket)
             .and_then(move |(task, inc)| match mode {
                 ReceiveMode::Print => print_file(task, inc).boxed(),
-                ReceiveMode::Save { outdir } => save_file(outdir, task, inc).boxed(),
+                ReceiveMode::Save { outdir, naming } => save_file(outdir, task, inc, naming).boxed(),
                 ReceiveMode::Callback { url } => forward_file(task, inc, url).boxed(),
             })
             .take(*count as usize)
@@ -57,7 +56,7 @@ async fn main() -> ExitCode {
     let result = tokio::select! {
         res = work => res,
         _ = tokio::signal::ctrl_c() => {
-            println!("Shutting down");
+            eprintln!("Shutting down");
             return ExitCode::from(130);
         }
     };
@@ -69,19 +68,22 @@ async fn main() -> ExitCode {
     }
 }
 
-pub async fn save_file(dir: &PathBuf, socket_task: SocketTask, mut incoming: impl AsyncRead + Unpin) -> Result<()> {
+pub async fn save_file(dir: &Path, socket_task: SocketTask, mut incoming: impl AsyncRead + Unpin, naming_scheme: &str) -> Result<()> {
     let ts = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-    let fname = dir.join(&format!("{ts}_{}", socket_task.from));
-    let mut file = tokio::fs::File::create(fname).await?;
+    let from = socket_task.from.as_ref().split('.').take(2).collect::<Vec<_>>().join(".");
+    let args: SendArgs = serde_json::from_value(socket_task.metadata).context("Failed to deserialize metadata")?;
+    let filename = naming_scheme
+        .replace("%f", &from)
+        .replace("%t", &ts.to_string())
+        .replace("%n", args.get_suggested_name().unwrap_or(""));
+    let mut file = tokio::fs::File::create(dir.join(filename)).await?;
     tokio::io::copy(&mut incoming, &mut file).await?;
     Ok(())
 }
 
-async fn send_file(to: &str, mut stream: impl AsyncRead + Unpin, meta: FileMetadata) -> Result<()> {
-    // TODO: rethink this
+async fn send_file(mut stream: impl AsyncRead + Unpin, meta @ SendArgs { to, .. }: &SendArgs) -> Result<()> {
     let to = AppId::new_unchecked(format!(
-        "{}.{to}.{}",
-        CONFIG.beam_id.app_name(),
+        "{to}.{}",
         CONFIG.beam_id.as_ref().splitn(3, '.').nth(2).expect("Invalid app id")
     ));
     let mut conn = BEAM_CLIENT
@@ -105,14 +107,21 @@ pub fn stream_tasks() -> impl Stream<Item = Result<SocketTask>> {
 
 pub async fn connect_socket(socket_task: SocketTask) -> Result<(SocketTask, Upgraded)> {
     let id = socket_task.id;
-    Ok((socket_task, BEAM_CLIENT.connect_socket(&id).await.context("Failed to connect to socket")?))
+    Ok((socket_task, BEAM_CLIENT.connect_socket(&id).await.with_context(|| format!("Failed to connect to socket {id}"))?))
 }
 
 pub async fn forward_file(socket_task: SocketTask, incoming: impl AsyncRead + Unpin + Send + 'static, cb: &Url) -> Result<()> {
-    let FileMetadata { related_headers } = serde_json::from_value(socket_task.metadata).context("Failed to deserialize metadata")?;
+    let ref args @ SendArgs { ref meta, .. } = serde_json::from_value(socket_task.metadata).context("Failed to deserialize metadata")?;
+    let mut headers = HeaderMap::with_capacity(2);
+    if let Some(meta) = meta {
+        headers.append(HeaderName::from_static("metadata"), HeaderValue::from_bytes(&serde_json::to_vec(&meta)?)?);
+    }
+    if let Some(name) = args.get_suggested_name() {
+        headers.append(HeaderName::from_static("filename"), HeaderValue::from_str(validate_filename(name)?)?);
+    }
     let res = CLIENT
         .post(cb.clone())
-        .headers(related_headers)
+        .headers(headers)
         .body(reqwest::Body::wrap_stream(ReaderStream::new(incoming)))
         .send()
         .await;
@@ -124,15 +133,17 @@ pub async fn forward_file(socket_task: SocketTask, incoming: impl AsyncRead + Un
 }
 
 pub async fn print_file(socket_task: SocketTask, mut incoming: impl AsyncRead + Unpin) -> Result<()> {
-    println!("Printing file from {}", socket_task.from);
+    eprintln!("Incoming file from {}", socket_task.from);
     tokio::io::copy(&mut incoming, &mut tokio::io::stdout()).await?;
-    println!("Done printing file from {}", socket_task.from);
+    eprintln!("Done printing file from {}", socket_task.from);
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct FileMetadata {
-    #[serde(with = "http_serde::header_map")]
-    related_headers: HeaderMap,
-}
 
+fn validate_filename(name: &str) -> Result<&str> {
+    if name.chars().all(|c| c.is_alphanumeric() || ['_', '.', '-'].contains(&c)) {
+        Ok(name)
+    } else {
+        Err(anyhow!("Invalid filename: {name}"))
+    }
+}

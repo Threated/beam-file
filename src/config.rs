@@ -1,7 +1,9 @@
 use std::{convert::Infallible, path::PathBuf};
 
 use beam_lib::{reqwest::Url, AppId};
-use clap::{Parser, Subcommand, ValueHint};
+use clap::{Parser, Subcommand, ValueHint, Args};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Samply.Beam.File
 #[derive(Debug, Parser)]
@@ -24,14 +26,8 @@ pub struct Config {
 
 #[derive(Subcommand, Debug)]
 pub enum Mode {
-    Send {
-        /// Name of the receiving proxy
-        #[clap(long)]
-        to: String,
-
-        #[clap(value_hint = ValueHint::FilePath)]
-        file: PathBuf
-    },
+    /// Send files
+    Send(SendArgs),
     /// Receive files from other Samply.Beam.File instances
     Receive {
         #[clap(subcommand)]
@@ -53,6 +49,34 @@ pub enum Mode {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, Args)]
+pub struct SendArgs {
+    /// Name of the receiving beam app without broker id e.g. app1.proxy2
+    #[clap(long)]
+    #[serde(skip)]
+    pub to: String,
+
+    /// Name of the file to be read or '-' to read from stdin
+    #[clap(value_hint = ValueHint::FilePath)]
+    pub file: PathBuf,
+
+    /// A suggestion for the new name the receiver should use. Will default to the uploaded files name if it is not read from stdin.
+    #[clap(long)]
+    #[serde(skip_serializing_if  = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// Additional metadata for the file
+    #[clap(long)]
+    #[serde(skip_serializing_if  = "Option::is_none")]
+    pub meta: Option<Value>,
+}
+
+impl SendArgs {
+    pub fn get_suggested_name(&self) -> Option<&str> {
+        self.name.as_deref().or_else(|| (self.file.to_str()? != "-").then_some(self.file.to_str()?))
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub enum ReceiveMode {
     Print,
@@ -60,6 +84,10 @@ pub enum ReceiveMode {
         /// Directory files will be written to
         #[clap(long, short = 'o', value_hint = ValueHint::DirPath)]
         outdir: PathBuf,
+
+        /// Naming scheme used to save files. %t -> unix timestamp %f beam app id e.g. app1.proxy2 %n suggested name from upload see send arguments
+        #[clap(long, short = 'p', default_value = "%f_%t")]
+        naming: String
     },
     Callback {
         /// A url to an endpoint that will be called when we are receiving a new file

@@ -1,13 +1,13 @@
 use std::{io, net::SocketAddr, sync::Arc};
 
 use axum::{
-    extract::{BodyStream, Path, State}, headers::{authorization, Authorization}, http::{header, HeaderMap, HeaderName, StatusCode}, routing::post, Router, TypedHeader
+    extract::{BodyStream, Path, State}, headers::{authorization, Authorization}, http::{HeaderMap, StatusCode}, routing::post, Router, TypedHeader
 };
 use beam_lib::AppId;
 use futures_util::TryStreamExt as _;
 use tokio_util::io::StreamReader;
 
-use crate::{FileMetadata, BEAM_CLIENT, CONFIG};
+use crate::{SendArgs, BEAM_CLIENT, CONFIG};
 
 pub async fn serve(addr: &SocketAddr, api_key: &str) -> anyhow::Result<()> {
     let app = Router::new()
@@ -37,25 +37,13 @@ async fn send_file(
         CONFIG.beam_id.app_name(),
         CONFIG.beam_id.as_ref().splitn(3, '.').nth(2).expect("Invalid app id")
     ));
-    const RELEVANT_HEADERS: [HeaderName; 5] = [
-        header::CONTENT_LENGTH,
-        header::CONTENT_DISPOSITION,
-        header::CONTENT_ENCODING,
-        header::CONTENT_TYPE,
-        header::HeaderName::from_static("metadata")
-    ];
-    let related_headers = headers
-        .into_iter()
-        .filter_map(|(maybe_k, v)| {
-            if let Some(k) = maybe_k {
-                RELEVANT_HEADERS.contains(&k).then_some((k, v))
-            } else {
-                None
-            }
-        })
-        .collect();
     let mut conn = BEAM_CLIENT
-        .create_socket_with_metadata(&to, FileMetadata { related_headers })
+        .create_socket_with_metadata(&to, SendArgs {
+            file: "-".into(),
+            meta: headers.get("metadata").and_then(|v| serde_json::from_slice(v.as_bytes()).map_err(|e| eprintln!("Failed to deserialize metadata: {e}. Skipping metadata")).ok()),
+            name: headers.get("filename").and_then(|v| v.to_str().map(Into::into).ok()),
+            ..Default::default()
+        })
         .await
         .map_err(|e| {
             eprintln!("Failed to tunnel request: {e}");
