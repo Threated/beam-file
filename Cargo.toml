@@ -9,7 +9,7 @@ license = "Apache-2.0"
 [dependencies]
 axum = { version = "0.6", features = ["headers"] }
 http-serde = "1.1"
-reqwest = { version = "0.11", features = ["tokio-rustls", "rustls-tls", "stream"], default-features = false }
+reqwest = { version = "0.12", features = ["tokio-rustls", "rustls-tls", "stream"], default-features = false }
 clap = { version = "4.5.1", features = ["derive", "env"] }
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread", "signal"] }
 once_cell = "1"
