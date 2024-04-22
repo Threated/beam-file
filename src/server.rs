@@ -7,7 +7,7 @@ use beam_lib::AppId;
 use futures_util::TryStreamExt as _;
 use tokio_util::io::StreamReader;
 
-use crate::{SendArgs, BEAM_CLIENT, CONFIG};
+use crate::{FileMeta, BEAM_CLIENT, CONFIG};
 
 pub async fn serve(addr: &SocketAddr, api_key: &str) -> anyhow::Result<()> {
     let app = Router::new()
@@ -33,16 +33,13 @@ async fn send_file(
         return Err(StatusCode::UNAUTHORIZED);
     }
     let to = AppId::new_unchecked(format!(
-        "{}.{other_proxy_name}.{}",
-        CONFIG.beam_id.app_name(),
+        "{other_proxy_name}.{}",
         CONFIG.beam_id.as_ref().splitn(3, '.').nth(2).expect("Invalid app id")
     ));
     let mut conn = BEAM_CLIENT
-        .create_socket_with_metadata(&to, SendArgs {
-            file: "-".into(),
+        .create_socket_with_metadata(&to, FileMeta {
             meta: headers.get("metadata").and_then(|v| serde_json::from_slice(v.as_bytes()).map_err(|e| eprintln!("Failed to deserialize metadata: {e}. Skipping metadata")).ok()),
-            name: headers.get("filename").and_then(|v| v.to_str().map(Into::into).ok()),
-            ..Default::default()
+            suggested_name: headers.get("filename").and_then(|v| v.to_str().map(Into::into).ok()),
         })
         .await
         .map_err(|e| {

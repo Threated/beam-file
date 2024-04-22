@@ -5,6 +5,8 @@ use clap::{Parser, Subcommand, ValueHint, Args};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::{validate_filename, FileMeta};
+
 /// Samply.Beam.File
 #[derive(Debug, Parser)]
 pub struct Config {
@@ -63,7 +65,7 @@ pub struct SendArgs {
     /// A suggestion for the new name the receiver should use. Will default to the uploaded files name if it is not read from stdin.
     #[clap(long)]
     #[serde(skip_serializing_if  = "Option::is_none")]
-    pub name: Option<String>,
+    name: Option<String>,
 
     /// Additional metadata for the file
     #[clap(long)]
@@ -72,8 +74,18 @@ pub struct SendArgs {
 }
 
 impl SendArgs {
-    pub fn get_suggested_name(&self) -> Option<&str> {
-        self.name.as_deref().or_else(|| (self.file.to_str()? != "-").then_some(self.file.to_str()?))
+    fn get_suggested_name(&self) -> Option<&str> {
+        self.name
+            .as_deref()
+            .or_else(|| (self.file.as_os_str() != "-").then_some(self.file.file_name()?.to_str()?))
+            .and_then(|v| validate_filename(v).ok())
+    }
+
+    pub fn to_file_meta(&self) -> FileMeta {
+        FileMeta {
+            suggested_name: self.get_suggested_name().map(ToOwned::to_owned),
+            meta: self.meta.clone()
+        }
     }
 }
 

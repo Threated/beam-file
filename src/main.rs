@@ -10,6 +10,7 @@ use config::{Config, SendArgs, Mode, ReceiveMode};
 use futures_util::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use once_cell::sync::Lazy;
 use reqwest::{Client, Upgraded, Url};
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
 use tokio_util::io::ReaderStream;
 use reqwest::header::{HeaderName, HeaderValue, HeaderMap};
@@ -29,13 +30,14 @@ pub static CLIENT: Lazy<Client> = Lazy::new(Client::new);
 #[tokio::main]
 async fn main() -> ExitCode {
     let work = match &CONFIG.mode {
-        Mode::Send(send_args @ SendArgs { file, .. }) if file.to_string_lossy() == "-" => send_file(tokio::io::stdin(), send_args).boxed(),
-        Mode::Send(send_args @ SendArgs { file, .. }) => tokio::fs::File::open(file)
+        Mode::Send(send_args) if send_args.file.to_string_lossy() == "-" => send_file(tokio::io::stdin(), send_args).boxed(),
+        Mode::Send(send_args) => tokio::fs::File::open(&send_args.file)
             .err_into()
             .and_then(|f| send_file(f, send_args))
             .boxed(),
         Mode::Receive { count, mode } => stream_tasks()
             .and_then(connect_socket)
+            .inspect_ok(|(task, _)| eprintln!("Receiving file from: {}", task.from))
             .and_then(move |(task, inc)| match mode {
                 ReceiveMode::Print => print_file(task, inc).boxed(),
                 ReceiveMode::Save { outdir, naming } => save_file(outdir, task, inc, naming).boxed(),
@@ -71,11 +73,12 @@ async fn main() -> ExitCode {
 pub async fn save_file(dir: &Path, socket_task: SocketTask, mut incoming: impl AsyncRead + Unpin, naming_scheme: &str) -> Result<()> {
     let ts = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let from = socket_task.from.as_ref().split('.').take(2).collect::<Vec<_>>().join(".");
-    let args: SendArgs = serde_json::from_value(socket_task.metadata).context("Failed to deserialize metadata")?;
+    let meta: FileMeta = serde_json::from_value(socket_task.metadata).context("Failed to deserialize metadata")?;
     let filename = naming_scheme
         .replace("%f", &from)
         .replace("%t", &ts.to_string())
-        .replace("%n", args.get_suggested_name().unwrap_or(""));
+        // Save because deserialize implementation of suggested_name does path traversal check
+        .replace("%n", meta.suggested_name.as_ref().map(String::as_str).unwrap_or(""));
     let mut file = tokio::fs::File::create(dir.join(filename)).await?;
     tokio::io::copy(&mut incoming, &mut file).await?;
     Ok(())
@@ -87,7 +90,7 @@ async fn send_file(mut stream: impl AsyncRead + Unpin, meta @ SendArgs { to, .. 
         CONFIG.beam_id.as_ref().splitn(3, '.').nth(2).expect("Invalid app id")
     ));
     let mut conn = BEAM_CLIENT
-        .create_socket_with_metadata(&to, meta)
+        .create_socket_with_metadata(&to, meta.to_file_meta())
         .await?;
     tokio::io::copy(&mut stream, &mut conn).await?;
     Ok(())
@@ -111,13 +114,13 @@ pub async fn connect_socket(socket_task: SocketTask) -> Result<(SocketTask, Upgr
 }
 
 pub async fn forward_file(socket_task: SocketTask, incoming: impl AsyncRead + Unpin + Send + 'static, cb: &Url) -> Result<()> {
-    let ref args @ SendArgs { ref meta, .. } = serde_json::from_value(socket_task.metadata).context("Failed to deserialize metadata")?;
+    let FileMeta { suggested_name, meta } = serde_json::from_value(socket_task.metadata).context("Failed to deserialize metadata")?;
     let mut headers = HeaderMap::with_capacity(2);
     if let Some(meta) = meta {
         headers.append(HeaderName::from_static("metadata"), HeaderValue::from_bytes(&serde_json::to_vec(&meta)?)?);
     }
-    if let Some(name) = args.get_suggested_name() {
-        headers.append(HeaderName::from_static("filename"), HeaderValue::from_str(validate_filename(name)?)?);
+    if let Some(name) = suggested_name {
+        headers.append(HeaderName::from_static("filename"), HeaderValue::from_str(&name)?);
     }
     let res = CLIENT
         .post(cb.clone())
@@ -146,4 +149,20 @@ fn validate_filename(name: &str) -> Result<&str> {
     } else {
         Err(anyhow!("Invalid filename: {name}"))
     }
+}
+
+fn deserialize_filename<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    let s = Option::<String>::deserialize(deserializer)?;
+    if let Some(ref f) = s {
+        validate_filename(&f).map_err(serde::de::Error::custom)?;
+    }
+    Ok(s)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileMeta {
+    #[serde(deserialize_with = "deserialize_filename")]
+    suggested_name: Option<String>,
+
+    meta: Option<serde_json::Value>,
 }
