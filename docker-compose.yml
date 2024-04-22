@@ -28,9 +28,6 @@ services:
       - BEAM_ID=app1.proxy2.broker
       - BEAM_SECRET=App1Secret
       - BEAM_URL=http://proxy2:8082
-      - BIND_ADDR=0.0.0.0:8086
-      - CALLBACK=http://echo
-      - API_KEY=SuperSecretApiKey2
     depends_on:
       - echo
     networks:
