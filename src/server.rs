@@ -1,10 +1,12 @@
 use std::{io, net::SocketAddr, sync::Arc};
 
 use axum::{
-    extract::{BodyStream, Path, State}, headers::{authorization, Authorization}, http::{HeaderMap, StatusCode}, routing::post, Router, TypedHeader
+    extract::{Path, State, Request}, http::{HeaderMap, StatusCode}, routing::post, Router
 };
+use axum_extra::{headers::{authorization, Authorization}, TypedHeader};
 use beam_lib::AppId;
 use futures_util::TryStreamExt as _;
+use tokio::net::TcpListener;
 use tokio_util::io::StreamReader;
 
 use crate::{FileMeta, BEAM_CLIENT, CONFIG};
@@ -13,8 +15,7 @@ pub async fn serve(addr: &SocketAddr, api_key: &str) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/send/:to", post(send_file))
         .with_state(Arc::from(api_key));
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
+    axum::serve(TcpListener::bind(&addr).await? ,app.into_make_service())
         .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.unwrap() })
         .await?;
     Ok(())
@@ -27,7 +28,7 @@ async fn send_file(
     auth: TypedHeader<Authorization<authorization::Basic>>,
     headers: HeaderMap,
     State(api_key): State<AppState>,
-    body: BodyStream,
+    req: Request,
 ) -> Result<(), StatusCode> {
     if auth.password() != api_key.as_ref() {
         return Err(StatusCode::UNAUTHORIZED);
@@ -47,7 +48,7 @@ async fn send_file(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     tokio::spawn(async move {
-        let mut reader = StreamReader::new(body.map_err(|err| io::Error::new(io::ErrorKind::Other, err)));
+        let mut reader = StreamReader::new(req.into_body().into_data_stream().map_err(|err| io::Error::new(io::ErrorKind::Other, err)));
         if let Err(e) = tokio::io::copy(&mut reader, &mut conn).await {
             // TODO: Some of these are normal find out which
             eprintln!("Error sending file: {e}")

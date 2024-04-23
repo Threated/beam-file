@@ -7,21 +7,23 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum = { version = "0.6", features = ["headers"], optional = true}
-http-serde = "1.1"
-reqwest = { version = "0.11", features = ["tokio-rustls", "rustls-tls", "stream"], default-features = false }
-clap = { version = "4.5.1", features = ["derive", "env"] }
+axum = { version = "0.7", optional = true}
+axum-extra = { version = "0.9", optional = true, features = ["typed-header"]}
+http-serde = "2.1"
+reqwest = { version = "0.12", features = ["rustls-tls", "stream"], default-features = false }
+clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "fs", "io-std"] }
 once_cell = "1"
-beam-lib = { git = "https://github.com/samply/beam", branch = "develop", features = ["http-util", "sockets"] }
+beam-lib = { git = "https://github.com/samply/beam", branch = "hyper-1", features = ["http-util", "sockets"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
-tokio-util = { version = "0.7.10", features = ["io"] }
-futures-util = { version = "0.3.30", default-features = false, features = ["std"] }
+tokio-util = { version = "0.7", features = ["io"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 anyhow = "1"
+sync_wrapper = { version = "1", features = ["futures"] }
 
 [features]
-server = ["dep:axum"]
+server = ["dep:axum", "dep:axum-extra"]
 
 [profile.release]
 lto = true

@@ -11,6 +11,7 @@ use futures_util::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use once_cell::sync::Lazy;
 use reqwest::{Client, Upgraded, Url};
 use serde::{Deserialize, Serialize};
+use sync_wrapper::SyncStream;
 use tokio::io::AsyncRead;
 use tokio_util::io::ReaderStream;
 use reqwest::header::{HeaderName, HeaderValue, HeaderMap};
@@ -78,7 +79,7 @@ pub async fn save_file(dir: &Path, socket_task: SocketTask, mut incoming: impl A
         .replace("%f", &from)
         .replace("%t", &ts.to_string())
         // Save because deserialize implementation of suggested_name does path traversal check
-        .replace("%n", meta.suggested_name.as_ref().map(String::as_str).unwrap_or(""));
+        .replace("%n", meta.suggested_name.as_deref().unwrap_or(""));
     let mut file = tokio::fs::File::create(dir.join(filename)).await?;
     tokio::io::copy(&mut incoming, &mut file).await?;
     Ok(())
@@ -125,7 +126,7 @@ pub async fn forward_file(socket_task: SocketTask, incoming: impl AsyncRead + Un
     let res = CLIENT
         .post(cb.clone())
         .headers(headers)
-        .body(reqwest::Body::wrap_stream(ReaderStream::new(incoming)))
+        .body(reqwest::Body::wrap_stream(SyncStream::new(ReaderStream::new(incoming))))
         .send()
         .await;
     match res {
@@ -154,7 +155,7 @@ fn validate_filename(name: &str) -> Result<&str> {
 fn deserialize_filename<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
     let s = Option::<String>::deserialize(deserializer)?;
     if let Some(ref f) = s {
-        validate_filename(&f).map_err(serde::de::Error::custom)?;
+        validate_filename(f).map_err(serde::de::Error::custom)?;
     }
     Ok(s)
 }
