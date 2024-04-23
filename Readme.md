@@ -3,6 +3,8 @@
 
 Samply.Beam.File allows bidirectional file transfer between two sites of the [Samply.Beam](https://github.com/samply/beam) network.
 
+> Current version of the readme is outdated and needs to be updated for the new cli functionality. Please use the cli help as documentation in the meantime.
+
 ## Usage
 In this description, we assume that you already have a running Samply.Beam installation consisting of a central Samply.Beam.Broker, a central Samply.Beam.CA and at least two local Samply.Proxies. To set this up, please see the [Samply.Beam Documentation](https://github.com/samply/beam/blob/main/README.md).
 
