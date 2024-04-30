@@ -5,7 +5,7 @@ mod server;
 use std::{path::Path, process::ExitCode, time::SystemTime};
 
 use anyhow::{anyhow, bail, Context, Result};
-use beam_lib::{AppId, BeamClient, BlockingOptions, MsgId, RawString, TaskRequest};
+use beam_lib::{AppId, BeamClient, BlockingOptions, MsgId, RawString, TaskRequest, TaskResult};
 use clap::Parser;
 use config::{Config, Mode, ReceiveMode, SendArgs};
 use futures_util::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
@@ -45,10 +45,28 @@ async fn main() -> ExitCode {
             }}).boxed(),
         Mode::Receive { count, mode } => stream_tasks()
             .inspect_ok(|task| eprintln!("Receiving file from: {}", task.from))
-            .and_then(move |task| match mode {
-                ReceiveMode::Print => print_file(task).boxed(),
-                ReceiveMode::Save { outdir, naming } => save_file(outdir, task, naming).boxed(),
-                ReceiveMode::Callback { url } => forward_file(task, url).boxed(),
+            .and_then(move |task| {
+                let id = task.id;
+                let mut task_res = TaskResult {
+                    from: CONFIG.beam_id.clone(),
+                    to: vec![task.from.clone()],
+                    task: task.id,
+                    status: beam_lib::WorkStatus::Succeeded,
+                    body: "",
+                    metadata: serde_json::Value::Null
+                };
+                async move {
+                    let res = match mode {
+                        ReceiveMode::Print => print_file(task).await,
+                        ReceiveMode::Save { outdir, naming } => save_file(outdir, task, naming).await,
+                        ReceiveMode::Callback { url } => forward_file(task, url).await,
+                    };
+                    if res.is_err() {
+                        task_res.status = beam_lib::WorkStatus::PermFailed
+                    }
+                    BEAM_CLIENT.put_result(&task_res, &id).await?;
+                    res
+                }.boxed()
             })
             .take(*count as usize)
             .for_each(|v| {
