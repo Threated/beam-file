@@ -5,6 +5,7 @@ mod server;
 use std::{path::Path, process::ExitCode, time::SystemTime};
 
 use anyhow::{anyhow, bail, Context, Result};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use beam_lib::{AppId, BeamClient, BlockingOptions, MsgId, RawString, TaskRequest, TaskResult};
 use clap::Parser;
 use config::{Config, Mode, ReceiveMode, SendArgs};
@@ -30,18 +31,18 @@ pub static CLIENT: Lazy<Client> = Lazy::new(Client::new);
 async fn main() -> ExitCode {
     let work = match &CONFIG.mode {
         Mode::Send(send_args) if send_args.file.to_string_lossy() == "-" => async {
-            let mut buf = String::new();
-            tokio::io::stdin().read_to_string(&mut buf).await?;
-            send_file(buf, send_args).await
+            let mut buf = Vec::new();
+            tokio::io::stdin().read_to_end(&mut buf).await?;
+            send_file(&buf, send_args).await
         }.boxed(),
         Mode::Send(send_args) => tokio::fs::File::open(&send_args.file)
             .err_into()
             .and_then(|mut f| {
                 let send_args = send_args.clone();
                 async move {
-                    let mut buf = String::new();
-                    f.read_to_string(&mut buf).await?;
-                    send_file(buf, &send_args).await
+                    let mut buf = Vec::new();
+                    f.read_to_end(&mut buf).await?;
+                    send_file(&buf, &send_args).await
             }}).boxed(),
         Mode::Receive { count, mode } => stream_tasks()
             .inspect_ok(|task| eprintln!("Receiving file from: {}", task.from))
@@ -95,7 +96,7 @@ async fn main() -> ExitCode {
     }
 }
 
-pub async fn save_file(dir: &Path, task: TaskRequest<RawString>, naming_scheme: &str) -> Result<()> {
+pub async fn save_file(dir: &Path, task: TaskRequest<Vec<u8>>, naming_scheme: &str) -> Result<()> {
     let ts = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let from = task.from.as_ref().split('.').take(2).collect::<Vec<_>>().join(".");
     let meta: FileMeta = serde_json::from_value(task.metadata).context("Failed to deserialize metadata")?;
@@ -105,11 +106,11 @@ pub async fn save_file(dir: &Path, task: TaskRequest<RawString>, naming_scheme: 
         // Save because deserialize implementation of suggested_name does path traversal check
         .replace("%n", meta.suggested_name.as_deref().unwrap_or(""));
     let mut file = tokio::fs::File::create(dir.join(filename)).await?;
-    file.write_all(task.body.0.as_bytes()).await?;
+    file.write_all(&task.body).await?;
     Ok(())
 }
 
-async fn send_file(body: impl Into<String>, meta @ SendArgs { to, .. }: &SendArgs) -> Result<()> {
+async fn send_file(body: &[u8], meta @ SendArgs { to, .. }: &SendArgs) -> Result<()> {
     let to = AppId::new_unchecked(format!(
         "{to}.{}",
         CONFIG
@@ -124,7 +125,7 @@ async fn send_file(body: impl Into<String>, meta @ SendArgs { to, .. }: &SendArg
             id: MsgId::new(),
             from: CONFIG.beam_id.clone(),
             to: vec![to],
-            body: RawString::from(body.into()),
+            body: RawString::from(STANDARD.encode(body)),
             ttl: "60s".to_string(),
             failure_strategy: beam_lib::FailureStrategy::Discard,
             metadata: serde_json::to_value(meta.to_file_meta())?,
@@ -133,9 +134,9 @@ async fn send_file(body: impl Into<String>, meta @ SendArgs { to, .. }: &SendArg
     Ok(())
 }
 
-pub fn stream_tasks() -> impl Stream<Item = Result<TaskRequest<RawString>>> {
+pub fn stream_tasks() -> impl Stream<Item = Result<TaskRequest<Vec<u8>>>> {
     static BLOCK: Lazy<BlockingOptions> = Lazy::new(|| BlockingOptions::from_count(1));
-    futures_util::stream::repeat_with(move || BEAM_CLIENT.poll_pending_tasks(&BLOCK)).filter_map(
+    futures_util::stream::repeat_with(move || BEAM_CLIENT.poll_pending_tasks::<RawString>(&BLOCK)).filter_map(
         |v| async {
             match v.await {
                 Ok(mut v) => Some(Ok(v.pop()?)),
@@ -144,10 +145,21 @@ pub fn stream_tasks() -> impl Stream<Item = Result<TaskRequest<RawString>>> {
                 ),
             }
         },
-    )
+    ).and_then(|TaskRequest { id, from, to, body, ttl, failure_strategy, metadata }| async move {
+        let body = STANDARD.decode(body.0)?;
+        Ok(TaskRequest {
+            id,
+            from,
+            to,
+            body,
+            ttl,
+            failure_strategy,
+            metadata,
+        })
+    })
 }
 
-pub async fn forward_file(task: TaskRequest<RawString>, cb: &Url) -> Result<()> {
+pub async fn forward_file(task: TaskRequest<Vec<u8>>, cb: &Url) -> Result<()> {
     let FileMeta { suggested_name, meta } = serde_json::from_value(task.metadata).context("Failed to deserialize metadata")?;
     let mut headers = HeaderMap::with_capacity(2);
     if let Some(meta) = meta {
@@ -159,7 +171,7 @@ pub async fn forward_file(task: TaskRequest<RawString>, cb: &Url) -> Result<()> 
     let res = CLIENT
         .post(cb.clone())
         .headers(headers)
-        .body(task.body.0)
+        .body(task.body)
         .send()
         .await;
     match res {
@@ -172,10 +184,10 @@ pub async fn forward_file(task: TaskRequest<RawString>, cb: &Url) -> Result<()> 
     }
 }
 
-pub async fn print_file(task: TaskRequest<RawString>) -> Result<()> {
+pub async fn print_file(task: TaskRequest<Vec<u8>>) -> Result<()> {
     eprintln!("Incoming file from {}", task.from);
     tokio::io::stdout()
-        .write_all(task.body.0.as_bytes())
+        .write_all(&task.body)
         .await?;
     eprintln!("Done printing file from {}", task.from);
     Ok(())
