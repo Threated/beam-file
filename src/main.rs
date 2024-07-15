@@ -2,6 +2,7 @@ mod config;
 #[cfg(feature = "server")]
 mod server;
 
+use std::time::Duration;
 use std::{path::Path, process::ExitCode, time::SystemTime};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -70,11 +71,11 @@ async fn main() -> ExitCode {
                 }.boxed()
             })
             .take(*count as usize)
-            .for_each(|v| {
+            .for_each(|v| async {
                 if let Err(e) = v {
                     eprintln!("{e}");
+                    tokio::time::sleep(Duration::from_secs(10)).await;
                 }
-                futures_util::future::ready(())
             })
             .map(Ok)
             .boxed(),
