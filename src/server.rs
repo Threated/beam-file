@@ -1,36 +1,27 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 
 use axum::{
-    extract::{Path, State}, http::{HeaderMap, StatusCode}, routing::post, Router
+    extract::Path, http::{HeaderMap, StatusCode}, routing::post, Router
 };
-use axum_extra::{headers::{authorization, Authorization}, TypedHeader};
 use beam_lib::{AppId, MsgId, RawString, TaskRequest};
 use tokio::net::TcpListener;
 
 use crate::{FileMeta, BEAM_CLIENT, CONFIG};
 
-pub async fn serve(addr: &SocketAddr, api_key: &str) -> anyhow::Result<()> {
+pub async fn serve(addr: &SocketAddr) -> anyhow::Result<()> {
     let app = Router::new()
-        .route("/send/:to", post(send_file))
-        .with_state(Arc::from(api_key));
+        .route("/send/:to", post(send_file));
     axum::serve(TcpListener::bind(&addr).await? ,app.into_make_service())
         .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.unwrap() })
         .await?;
     Ok(())
 }
 
-type AppState = Arc<str>;
-
 async fn send_file(
     Path(other_proxy_name): Path<String>,
-    auth: TypedHeader<Authorization<authorization::Basic>>,
     headers: HeaderMap,
-    State(api_key): State<AppState>,
     req: String,
 ) -> Result<(), StatusCode> {
-    if auth.password() != api_key.as_ref() {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
     let to = AppId::new_unchecked(format!(
         "{other_proxy_name}.{}",
         CONFIG.beam_id.as_ref().splitn(3, '.').nth(2).expect("Invalid app id")

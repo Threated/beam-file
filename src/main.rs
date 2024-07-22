@@ -80,7 +80,7 @@ async fn main() -> ExitCode {
             .map(Ok)
             .boxed(),
         #[cfg(feature = "server")]
-        Mode::Server { bind_addr, api_key } => server::serve(bind_addr, api_key).boxed(),
+        Mode::Server { bind_addr } => server::serve(bind_addr).boxed(),
     };
     let result = tokio::select! {
         res = work => res,

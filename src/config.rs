@@ -44,10 +44,6 @@ pub enum Mode {
         /// Address the server should bind to
         #[clap(env, long, default_value = "0.0.0.0:8080")]
         bind_addr: std::net::SocketAddr,
-
-        /// Api key required for uploading files
-        #[clap(env, long)]
-        api_key: String,
     }
 }
 
