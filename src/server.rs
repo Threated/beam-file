@@ -1,8 +1,9 @@
 use std::net::SocketAddr;
 
 use axum::{
-    extract::Path, http::{HeaderMap, StatusCode}, routing::post, Router
+    body::Bytes, extract::Path, http::{HeaderMap, StatusCode}, routing::post, Router
 };
+use base64::{engine::general_purpose::STANDARD, Engine};
 use beam_lib::{AppId, MsgId, RawString, TaskRequest};
 use tokio::net::TcpListener;
 
@@ -20,7 +21,7 @@ pub async fn serve(addr: &SocketAddr) -> anyhow::Result<()> {
 async fn send_file(
     Path(other_proxy_name): Path<String>,
     headers: HeaderMap,
-    req: String,
+    req: Bytes,
 ) -> Result<(), StatusCode> {
     let to = AppId::new_unchecked(format!(
         "{other_proxy_name}.{}",
@@ -34,7 +35,7 @@ async fn send_file(
         id: MsgId::new(),
         from: CONFIG.beam_id.clone(),
         to: vec![to],
-        body: RawString(req),
+        body: RawString(STANDARD.encode(&req)),
         ttl: "30s".to_string(),
         failure_strategy: beam_lib::FailureStrategy::Discard,
         metadata: serde_json::to_value(meta).unwrap(),
